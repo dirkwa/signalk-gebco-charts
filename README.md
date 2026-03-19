@@ -1,6 +1,6 @@
-# GEBCO Bathymetric MBTiles
+# GEBCO Shaded Relief MBTiles
 
-Pre-built MBTiles files derived from the [GEBCO Grid](https://www.gebco.net/data_and_products/gridded_bathymetry_data/) for use with [SignalK](https://signalk.org) and [Freeboard-SK](https://github.com/SignalK/freeboard-sk).
+Pre-built shaded relief MBTiles derived from the [GEBCO Grid](https://www.gebco.net/data_and_products/gridded_bathymetry_data/) for use with [SignalK](https://signalk.org) and [Freeboard-SK](https://github.com/SignalK/freeboard-sk).
 
 GEBCO releases a new grid every year (usually July–August). This repository automatically detects new releases and builds updated MBTiles via GitHub Actions.
 
@@ -8,32 +8,25 @@ GEBCO releases a new grid every year (usually July–August). This repository au
 
 See the [Releases](../../releases) page for the latest pre-built files.
 
-| File | Type | Size | Description |
-|------|------|------|-------------|
-| `gebco-YYYY-depth-shading.zip` | Raster MBTiles (PNG) | ~100–150 MB | Blue depth gradient, z0–z8 |
-| `gebco-YYYY-depth-contours.zip` | Vector MBTiles (MVT) | ~400–600 MB | Depth contours + area polygons, z0–z8 |
-| `catalog.json` | JSON | tiny | Machine-readable catalog for the plugin |
+| File | Description |
+|------|-------------|
+| `gebco-YYYY-shaded-relief.zip` | Raster shaded relief (PNG tiles, z0–z8) |
+| `catalog.json` | Machine-readable catalog for the charts provider plugin |
 
 ## Usage with SignalK
 
-1. Download the zip file(s) you need from the latest release
+1. Download the zip file from the latest release
 2. Extract the `.mbtiles` file
 3. Place it in your SignalK charts directory
 4. Restart SignalK — the chart provider will register it automatically
 
-The vector contours file contains two layers:
-- **`depth_contours`** — LineStrings with a `depth` attribute (negative meters)
-- **`depth_areas`** — Polygons with `DRVAL1` (min depth) and `DRVAL2` (max depth)
-
-These match the S-57 attribute naming convention for use with the same client-side style functions as ENC vector tiles.
-
-## ⚠️ Important
+## Warning
 
 GEBCO's 15 arc-second resolution (~450m cells at the equator) is suitable for **offshore passage planning only**. It is **not suitable** for coastal navigation, harbor entry, or anywhere accurate depth information is critical. Always use official nautical charts for navigation.
 
 ## Attribution
 
-GEBCO Compilation Group (YEAR) GEBCO YEAR Grid  
+GEBCO Compilation Group (YEAR) GEBCO YEAR Grid
 https://www.gebco.net
 
 The GEBCO Grid is released under **CC-BY 4.0** — you may redistribute and create derivative works but must include attribution. See [GEBCO terms of use](https://www.gebco.net/data_and_products/gridded_bathymetry_data/#a1) for details. The build tooling in this repository is licensed under Apache-2.0.
@@ -43,22 +36,18 @@ The GEBCO Grid is released under **CC-BY 4.0** — you may redistribute and crea
 ```
 COG on source.coop S3 (4.28 GB Cloud-Optimized GeoTIFF)
     │
-    │  GDAL /vsicurl/ streaming — only downloads each region's bytes
+    │  GDAL /vsicurl/ streaming (full global extent)
     │
-    ├─ Pacific region    ──────────────┐
-    ├─ Atlantic region   ──(parallel)──┤
-    ├─ Indian Ocean E    ──────────────┤
-    └─ Indian Ocean W    ──────────────┘
+    ├─ gdaldem hillshade     → 3D relief shading
+    ├─ gdaldem color-relief  → hypsometric color ramp
+    │                          (ocean: navy→cyan, land: green→brown→white)
+    │
+    └─ gdal_calc.py blend    → hillshade × color → shaded relief
               │
-              │  Per-region:
-              │  gdaldem color-relief  → raster MBTiles (PNG, z0-z8)
-              │  gdal_contour          → depth lines + area polygons
-              │  tippecanoe            → vector MBTiles (MVT, z0-z8)
-              │
-              └─ tile-join merge → global files → GitHub Release
+              └─ gdal_translate -of MBTiles → PNG tiles z0-z8
+                       │
+                       └─ GitHub Release
 ```
-
-The COG streaming means no 4GB+ download — each region job only downloads the bytes it needs.
 
 ## Triggering a build manually
 

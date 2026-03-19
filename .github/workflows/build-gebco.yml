@@ -5,10 +5,9 @@ name: Build GEBCO MBTiles
 #   - Manual dispatch (for testing or forced rebuilds)
 #
 # Architecture:
-#   1. setup         – install tools, validate inputs
-#   2. build-region  – matrix of 4 parallel regional builds (raster + vector per region)
-#   3. merge         – tile-join all regional MBTiles into global files
-#   4. release       – zip outputs, create GitHub Release, update version state
+#   1. setup   – validate COG availability
+#   2. build   – stream COG, generate hillshade + hypsometric colors, tile to MBTiles
+#   3. release – zip output, create GitHub Release, update version state
 
 on:
   workflow_dispatch:
@@ -17,36 +16,14 @@ on:
         description: 'GEBCO year to build (e.g. 2025)'
         required: true
         default: '2025'
-      skip_raster:
-        description: 'Skip raster MBTiles generation'
-        type: boolean
-        default: false
-      skip_vector:
-        description: 'Skip vector MBTiles generation'
-        type: boolean
-        default: false
-
-env:
-  # Geographic regions to process in parallel.
-  # Pacific is split in two to keep polygon complexity within
-  # tippecanoe's wagyu clipping limits.
-  # Format: "name|minx|miny|maxx|maxy"
-  REGIONS: |
-    pacific_west|-180|-80|-120|80
-    pacific_east|-120|-80|-60|80
-    atlantic|-60|-80|30|80
-    indian_east|30|-80|120|80
-    indian_west_pacific_east|120|-80|180|80
 
 jobs:
   # ─────────────────────────────────────────────────────────────────────────
-  # JOB 1: Validate inputs and prepare the region matrix
+  # JOB 1: Validate inputs
   # ─────────────────────────────────────────────────────────────────────────
   setup:
     runs-on: ubuntu-latest
     outputs:
-      matrix: ${{ steps.build-matrix.outputs.matrix }}
-      cog_url: ${{ steps.validate-cog.outputs.cog_url }}
       gebco_year: ${{ steps.validate-cog.outputs.gebco_year }}
 
     steps:
@@ -65,48 +42,21 @@ jobs:
             --max-time 30 --retry 3 -r "0-1023" "$COG_URL")
 
           if [ "$HTTP_CODE" = "206" ] || [ "$HTTP_CODE" = "200" ]; then
-            echo "✅ COG available (HTTP $HTTP_CODE)"
-            echo "cog_url=$COG_URL" >> "$GITHUB_OUTPUT"
-            echo "gebco_year=$YEAR"  >> "$GITHUB_OUTPUT"
+            echo "COG available (HTTP $HTTP_CODE)"
+            echo "gebco_year=$YEAR" >> "$GITHUB_OUTPUT"
           else
-            echo "❌ COG not available (HTTP $HTTP_CODE) for year $YEAR"
-            echo "   URL: $COG_URL"
-            echo "   If GEBCO $YEAR was just released, the COG may not be on source.coop yet."
-            echo "   Check https://source.coop/alexgleith and open an issue to update the URL."
+            echo "COG not available (HTTP $HTTP_CODE) for year $YEAR"
+            echo "URL: $COG_URL"
             exit 1
           fi
 
-      - name: Build region matrix
-        id: build-matrix
-        run: |
-          # Dynamically build the JSON matrix from the REGIONS env variable
-          MATRIX_JSON='{"include":['
-          FIRST=true
-          while IFS='|' read -r name minx miny maxx maxy; do
-            [ -z "$name" ] && continue
-            if [ "$FIRST" = true ]; then
-              FIRST=false
-            else
-              MATRIX_JSON+=','
-            fi
-            MATRIX_JSON+="{\"region\":\"$name\",\"minx\":\"$minx\",\"miny\":\"$miny\",\"maxx\":\"$maxx\",\"maxy\":\"$maxy\"}"
-          done <<< "${{ env.REGIONS }}"
-          MATRIX_JSON+=']}'
-
-          echo "Matrix: $MATRIX_JSON"
-          echo "matrix=$MATRIX_JSON" >> "$GITHUB_OUTPUT"
-
   # ─────────────────────────────────────────────────────────────────────────
-  # JOB 2: Regional builds (run in parallel, one per region)
-  # Each job streams its region from the COG, generates raster + vector MBTiles
+  # JOB 2: Build shaded relief MBTiles (single global pass)
   # ─────────────────────────────────────────────────────────────────────────
-  build-region:
+  build:
     needs: setup
     runs-on: ubuntu-latest
-    timeout-minutes: 120  # 2 hours max per region (downsampled contours)
-    strategy:
-      fail-fast: false    # Don't cancel other regions if one fails
-      matrix: ${{ fromJson(needs.setup.outputs.matrix) }}
+    timeout-minutes: 120
 
     steps:
       - name: Checkout
@@ -116,23 +66,9 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y gdal-bin python3-gdal sqlite3
-
           echo "GDAL version: $(gdal-config --version)"
 
-      - name: Install tippecanoe
-        if: ${{ github.event.inputs.skip_vector != 'true' }}
-        run: |
-          # Install from pre-built binary in the felt/tippecanoe releases
-          TIPPECANOE_VERSION=2.79.0
-          wget -q "https://github.com/felt/tippecanoe/archive/refs/tags/${TIPPECANOE_VERSION}.tar.gz"
-          tar xf "${TIPPECANOE_VERSION}.tar.gz"
-          cd "tippecanoe-${TIPPECANOE_VERSION}"
-          sudo apt-get install -y build-essential libsqlite3-dev zlib1g-dev
-          make -j2
-          sudo make install
-          tippecanoe --version
-
-      - name: Build region — ${{ matrix.region }}
+      - name: Build global shaded relief
         env:
           OUTDIR: ${{ github.workspace }}/output
           GEBCO_YEAR: ${{ needs.setup.outputs.gebco_year }}
@@ -142,152 +78,23 @@ jobs:
 
           .github/scripts/build-region.sh \
             "$GEBCO_YEAR" \
-            "${{ matrix.region }}" \
-            "${{ matrix.minx }}" \
-            "${{ matrix.miny }}" \
-            "${{ matrix.maxx }}" \
-            "${{ matrix.maxy }}"
+            "global" \
+            "-180" "-90" "180" "90"
 
           echo "--- Output files ---"
           ls -lh "$OUTDIR/"
 
-      - name: Remove skipped outputs
-        run: |
-          OUTDIR="${{ github.workspace }}/output"
-          if [ "${{ github.event.inputs.skip_raster }}" = "true" ]; then
-            rm -f "$OUTDIR/"*_raster.mbtiles
-          fi
-          if [ "${{ github.event.inputs.skip_vector }}" = "true" ]; then
-            rm -f "$OUTDIR/"*_vector.mbtiles
-          fi
-
-      - name: Upload regional MBTiles as artifact
-        uses: actions/upload-artifact@v5
-        with:
-          name: mbtiles-${{ matrix.region }}
-          path: output/*.mbtiles
-          retention-days: 1  # Only needed until the merge job runs
-
-  # ─────────────────────────────────────────────────────────────────────────
-  # JOB 3: Merge regional MBTiles into global files using tile-join
-  # ─────────────────────────────────────────────────────────────────────────
-  merge:
-    needs: [setup, build-region]
-    runs-on: ubuntu-latest
-    timeout-minutes: 120
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v5
-
-      - name: Install tippecanoe (for tile-join)
-        run: |
-          TIPPECANOE_VERSION=2.79.0
-          wget -q "https://github.com/felt/tippecanoe/archive/refs/tags/${TIPPECANOE_VERSION}.tar.gz"
-          tar xf "${TIPPECANOE_VERSION}.tar.gz"
-          cd "tippecanoe-${TIPPECANOE_VERSION}"
-          sudo apt-get install -y build-essential libsqlite3-dev zlib1g-dev
-          make -j2
-          sudo make install
-
-      - name: Install GDAL sqlite3
-        run: sudo apt-get install -y sqlite3
-
-      - name: Download all regional artifacts
-        uses: actions/download-artifact@v5
-        with:
-          pattern: mbtiles-*
-          path: artifacts/
-          merge-multiple: true
-
-      - name: List all artifacts
-        run: |
-          echo "=== Downloaded artifacts ==="
-          ls -lh artifacts/
-
-      - name: Merge raster MBTiles
-        if: ${{ github.event.inputs.skip_raster != 'true' }}
-        run: |
-          mkdir -p merged
-          YEAR="${{ needs.setup.outputs.gebco_year }}"
-
-          RASTER_FILES=$(ls artifacts/*_raster.mbtiles 2>/dev/null || echo "")
-          if [ -z "$RASTER_FILES" ]; then
-            echo "No raster files found, skipping"
-            exit 0
-          fi
-
-          echo "Merging raster tiles..."
-          # tile-join only works with vector (PBF) tiles in newer tippecanoe.
-          # For raster MBTiles, merge at the SQLite level instead.
-          MERGED="merged/gebco-${YEAR}-depth-shading.mbtiles"
-          FIRST=true
-          for F in $RASTER_FILES; do
-            if [ "$FIRST" = true ]; then
-              cp "$F" "$MERGED"
-              FIRST=false
-            else
-              # Copy tiles from subsequent files into the first
-              sqlite3 "$MERGED" "ATTACH '$F' AS src; INSERT OR REPLACE INTO tiles SELECT * FROM src.tiles; DETACH src;"
-            fi
-          done
-
-          # Update attribution in merged file
-          sqlite3 "$MERGED" "
-            INSERT OR REPLACE INTO metadata VALUES ('name', 'GEBCO ${YEAR} Depth Shading - Global');
-            INSERT OR REPLACE INTO metadata VALUES ('description', 'Global bathymetric depth shading raster tiles at z0-z8, derived from GEBCO ${YEAR} Grid');
-            INSERT OR REPLACE INTO metadata VALUES ('attribution', 'GEBCO Compilation Group (${YEAR}) GEBCO ${YEAR} Grid (https://www.gebco.net)');
-            INSERT OR REPLACE INTO metadata VALUES ('type', 'overlay');
-            INSERT OR REPLACE INTO metadata VALUES ('format', 'png');
-            INSERT OR REPLACE INTO metadata VALUES ('version', '${YEAR}.1');
-          "
-
-          echo "✅ Merged raster: $(du -sh merged/gebco-${YEAR}-depth-shading.mbtiles)"
-
-      - name: Merge vector MBTiles
-        if: ${{ github.event.inputs.skip_vector != 'true' }}
-        run: |
-          mkdir -p merged
-          YEAR="${{ needs.setup.outputs.gebco_year }}"
-
-          VECTOR_FILES=$(ls artifacts/*_vector.mbtiles 2>/dev/null || echo "")
-          if [ -z "$VECTOR_FILES" ]; then
-            echo "No vector files found, skipping"
-            exit 0
-          fi
-
-          echo "Merging vector tiles..."
-          tile-join \
-            --output="merged/gebco-${YEAR}-depth-contours.mbtiles" \
-            --force \
-            $VECTOR_FILES
-
-          # Update attribution
-          sqlite3 "merged/gebco-${YEAR}-depth-contours.mbtiles" "
-            INSERT OR REPLACE INTO metadata VALUES ('name', 'GEBCO ${YEAR} Depth Contours - Global');
-            INSERT OR REPLACE INTO metadata VALUES ('description', 'Global bathymetric depth contours and area polygons at z0-z8, derived from GEBCO ${YEAR} Grid. Layers: depth_contours (lines with depth attribute), depth_areas (polygons with DRVAL1/DRVAL2 attributes)');
-            INSERT OR REPLACE INTO metadata VALUES ('attribution', 'GEBCO Compilation Group (${YEAR}) GEBCO ${YEAR} Grid (https://www.gebco.net)');
-            INSERT OR REPLACE INTO metadata VALUES ('type', 'overlay');
-            INSERT OR REPLACE INTO metadata VALUES ('format', 'pbf');
-            INSERT OR REPLACE INTO metadata VALUES ('version', '${YEAR}.1');
-          "
-
-          echo "✅ Merged vector: $(du -sh merged/gebco-${YEAR}-depth-contours.mbtiles)"
-
-      - name: Zip final outputs
+      - name: Prepare release files
         run: |
           YEAR="${{ needs.setup.outputs.gebco_year }}"
           mkdir -p release
 
-          for MBTILES in merged/*.mbtiles; do
-            [ -f "$MBTILES" ] || continue
-            BASENAME=$(basename "$MBTILES" .mbtiles)
-            echo "Zipping $BASENAME..."
-            zip -j "release/${BASENAME}.zip" "$MBTILES"
-            echo "  → $(du -sh "release/${BASENAME}.zip")"
-          done
+          # Rename and zip
+          mv output/global_raster.mbtiles "output/gebco-${YEAR}-shaded-relief.mbtiles"
+          zip -j "release/gebco-${YEAR}-shaded-relief.zip" "output/gebco-${YEAR}-shaded-relief.mbtiles"
+          echo "Zipped: $(du -sh "release/gebco-${YEAR}-shaded-relief.zip")"
 
-          # Generate a catalog.json for the SignalK plugin to consume
+          # Generate catalog.json
           REPO="${{ github.repository }}"
           GENERATED=$(date -u +%Y-%m-%dT%H:%M:%SZ)
           jq -n \
@@ -295,8 +102,7 @@ jobs:
             --arg gen "$GENERATED" \
             --arg src "GEBCO ${YEAR} Grid" \
             --arg attr "GEBCO Compilation Group (${YEAR}) GEBCO ${YEAR} Grid (https://www.gebco.net)" \
-            --arg raster_url "https://github.com/${REPO}/releases/download/gebco-${YEAR}/gebco-${YEAR}-depth-shading.zip" \
-            --arg vector_url "https://github.com/${REPO}/releases/download/gebco-${YEAR}/gebco-${YEAR}-depth-contours.zip" \
+            --arg url "https://github.com/${REPO}/releases/download/gebco-${YEAR}/gebco-${YEAR}-shaded-relief.zip" \
             '{
               version: $ver,
               generated: $gen,
@@ -305,27 +111,13 @@ jobs:
               license: "CC-BY 4.0 (GEBCO data requires attribution)",
               files: [
                 {
-                  name: ("gebco-" + $ver + "-depth-shading"),
-                  description: "Global raster depth shading, z0-z8",
+                  name: ("gebco-" + $ver + "-shaded-relief"),
+                  description: "Global shaded relief (bathymetry + topography), z0-z8",
                   format: "raster-mbtiles",
                   bounds: [-180, -90, 180, 90],
                   minzoom: 0,
                   maxzoom: 8,
-                  url: $raster_url
-                },
-                {
-                  name: ("gebco-" + $ver + "-depth-contours"),
-                  description: "Global vector depth contours + areas, z0-z8",
-                  format: "vector-mbtiles",
-                  bounds: [-180, -90, 180, 90],
-                  minzoom: 0,
-                  maxzoom: 8,
-                  layers: ["depth_contours", "depth_areas"],
-                  attributes: {
-                    depth_contours: {depth: "Depth in meters (negative)"},
-                    depth_areas: {DRVAL1: "Min depth (m)", DRVAL2: "Max depth (m)"}
-                  },
-                  url: $vector_url
+                  url: $url
                 }
               ]
             }' > "release/catalog.json"
@@ -341,13 +133,13 @@ jobs:
           retention-days: 1
 
   # ─────────────────────────────────────────────────────────────────────────
-  # JOB 4: Create GitHub Release and update version state in repo
+  # JOB 3: Create GitHub Release and update version state
   # ─────────────────────────────────────────────────────────────────────────
   release:
-    needs: [setup, merge]
+    needs: [setup, build]
     runs-on: ubuntu-latest
     permissions:
-      contents: write  # Required to create releases and commit version file
+      contents: write
 
     steps:
       - name: Checkout
@@ -381,6 +173,14 @@ jobs:
                 repo: context.repo.repo,
                 release_id: existing.data.id,
               });
+              // Also delete the tag so it can be recreated
+              try {
+                await github.rest.git.deleteRef({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  ref: `tags/${tag}`,
+                });
+              } catch (e) {}
               console.log(`Deleted existing release ${tag}`);
             } catch (e) {
               // No existing release — that's fine
@@ -390,34 +190,26 @@ jobs:
               owner: context.repo.owner,
               repo: context.repo.repo,
               tag_name: tag,
-              name: `GEBCO ${year} MBTiles`,
+              name: `GEBCO ${year} Shaded Relief`,
               body: [
-                `## GEBCO ${year} Bathymetric MBTiles`,
+                `## GEBCO ${year} Shaded Relief MBTiles`,
                 ``,
-                `Pre-built MBTiles derived from the [GEBCO ${year} Grid](https://www.gebco.net/data_and_products/gridded_bathymetry_data/).`,
+                `Global bathymetric and topographic shaded relief tiles derived from the [GEBCO ${year} Grid](https://www.gebco.net/data_and_products/gridded_bathymetry_data/).`,
                 ``,
-                `### Files`,
-                ``,
-                `| File | Description | Format | Size |`,
-                `|------|-------------|--------|------|`,
-                `| \`gebco-${year}-depth-shading.zip\` | Raster depth shading | PNG tiles, z0-z8 | ~100-150 MB |`,
-                `| \`gebco-${year}-depth-contours.zip\` | Vector depth contours + area polygons | MVT/PBF tiles, z0-z8 | ~400-600 MB |`,
-                `| \`catalog.json\` | Machine-readable catalog for SignalK plugin | JSON | tiny |`,
-                ``,
-                `### Attribution`,
-                `GEBCO Compilation Group (${year}) GEBCO ${year} Grid`,
-                `https://www.gebco.net`,
+                `| File | Description |`,
+                `|------|-------------|`,
+                `| \`gebco-${year}-shaded-relief.zip\` | Raster shaded relief (PNG tiles, z0-z8) |`,
+                `| \`catalog.json\` | Machine-readable catalog for SignalK charts provider |`,
                 ``,
                 `### Usage with SignalK`,
-                `1. Download and extract the \`.zip\` files`,
-                `2. Place the \`.mbtiles\` files in your SignalK charts directory`,
-                `3. The chart provider will auto-detect them`,
+                `1. Download and extract the \`.zip\` file`,
+                `2. Place the \`.mbtiles\` file in your SignalK charts directory`,
+                `3. The chart provider will auto-detect it`,
                 ``,
-                `### Vector layer attributes`,
-                `- **depth_contours** layer: \`depth\` attribute (negative meters)`,
-                `- **depth_areas** layer: \`DRVAL1\` (min depth), \`DRVAL2\` (max depth)`,
+                `### Attribution`,
+                `GEBCO Compilation Group (${year}) GEBCO ${year} Grid — [gebco.net](https://www.gebco.net)`,
                 ``,
-                `> ⚠️ GEBCO's 15 arc-second resolution (~450m cells) is suitable for offshore`,
+                `> GEBCO's 15 arc-second resolution (~450m cells) is suitable for offshore`,
                 `> passage planning but NOT for coastal or harbor navigation.`,
                 `> Always use official nautical charts for navigation.`,
               ].join('\n'),
@@ -427,7 +219,6 @@ jobs:
 
             console.log(`Created release: ${release.data.html_url}`);
             core.setOutput('release_id', release.data.id);
-            core.setOutput('upload_url', release.data.upload_url);
 
       - name: Upload files to release
         uses: actions/github-script@v8
@@ -447,7 +238,6 @@ jobs:
 
               console.log(`Uploading ${filename} (${(stats.size / 1024 / 1024).toFixed(1)} MB)...`);
 
-              // Determine content type
               let contentType = 'application/octet-stream';
               if (filename.endsWith('.json')) contentType = 'application/json';
               if (filename.endsWith('.zip'))  contentType = 'application/zip';
@@ -464,7 +254,7 @@ jobs:
                 },
               });
 
-              console.log(`  ✅ Uploaded ${filename}`);
+              console.log(`  Uploaded ${filename}`);
             }
 
       - name: Update version state in repository
@@ -473,7 +263,6 @@ jobs:
           TODAY=$(date -u +%Y-%m-%d)
           TAG="gebco-${YEAR}"
 
-          # Update the version tracking file
           jq -n \
             --argjson year "$YEAR" \
             --arg date "$TODAY" \
@@ -490,12 +279,6 @@ jobs:
       - name: Summary
         run: |
           YEAR="${{ needs.setup.outputs.gebco_year }}"
-          echo "## ✅ GEBCO ${YEAR} MBTiles Release Complete" >> "$GITHUB_STEP_SUMMARY"
+          echo "## GEBCO ${YEAR} Shaded Relief Release Complete" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "Release: https://github.com/${{ github.repository }}/releases/tag/gebco-${YEAR}" >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "| File | Status |" >> "$GITHUB_STEP_SUMMARY"
-          echo "|------|--------|" >> "$GITHUB_STEP_SUMMARY"
-          echo "| gebco-${YEAR}-depth-shading.zip | ✅ Uploaded |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| gebco-${YEAR}-depth-contours.zip | ✅ Uploaded |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| catalog.json | ✅ Uploaded |" >> "$GITHUB_STEP_SUMMARY"

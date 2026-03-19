@@ -1,11 +1,11 @@
 #!/bin/bash
 # build-region.sh
-# Builds raster and vector MBTiles for a single geographic region
+# Builds raster shaded relief MBTiles for a single geographic region
 # from the GEBCO COG, streaming only the bytes needed.
 #
 # Usage: build-region.sh <YEAR> <REGION_NAME> <MINX> <MINY> <MAXX> <MAXY>
 #
-# Example: build-region.sh 2024 pacific -180 -80 -60 80
+# Example: build-region.sh 2024 global -180 -90 180 90
 
 set -euo pipefail
 
@@ -31,10 +31,8 @@ echo "=== Region: $REGION ($MINX,$MINY → $MAXX,$MAXY) ==="
 
 # ---------------------------------------------------------------
 # STEP 1: Stream the region from the COG into a local GeoTIFF
-# This is the only "download" - only the bytes for this bounding
-# box are transferred, not the full 4GB file.
 # ---------------------------------------------------------------
-echo "[1/5] Streaming region from COG..."
+echo "[1/4] Streaming region from COG..."
 REGION_TIF="$OUTDIR/${REGION}_raw.tif"
 
 gdal_translate \
@@ -47,48 +45,115 @@ gdal_translate \
 echo "      Downloaded: $(du -sh "$REGION_TIF" | cut -f1)"
 
 # ---------------------------------------------------------------
-# STEP 2: RASTER — Depth shading → PNG MBTiles
-# Nautical color ramp: deep navy → shallow cyan → transparent land
+# STEP 2: Generate hillshade for 3D relief effect
 # ---------------------------------------------------------------
-echo "[2/5] Building raster depth shading..."
+echo "[2/4] Generating hillshade..."
+HILLSHADE_TIF="$OUTDIR/${REGION}_hillshade.tif"
 
-# Nautical color table (depth in meters → RGBA)
-# Only covers negative values (ocean); land becomes transparent
-COLOR_TABLE="$OUTDIR/nautical_depths.txt"
+gdaldem hillshade \
+  -z 5 \
+  -az 315 \
+  -alt 45 \
+  -co COMPRESS=DEFLATE \
+  -co TILED=YES \
+  "$REGION_TIF" \
+  "$HILLSHADE_TIF"
+
+# ---------------------------------------------------------------
+# STEP 3: Apply hypsometric color ramp (ocean + land)
+# ---------------------------------------------------------------
+echo "[3/4] Applying color relief..."
+
+# Hypsometric color table matching GEBCO style:
+# Deep ocean navy → shallow cyan, then green lowlands → brown mountains → white peaks
+COLOR_TABLE="$OUTDIR/gebco_colors.txt"
 cat > "$COLOR_TABLE" << 'EOF'
 nv    0   0   0   0
--11000   0   0  40 255
--5000    0  20  80 255
--2000    0  50 120 255
--1000    0  80 160 255
--500    20 110 185 255
--200    40 140 200 255
--100    70 165 215 255
--50    100 185 228 255
--20    140 208 238 255
--10    175 225 245 255
--5     205 237 250 255
--2     225 244 252 255
-0        0   0   0   0
+-11000   8  10  40 255
+-8000   10  20  60 255
+-6000   14  30  78 255
+-4000   18  45 100 255
+-2000   24  65 130 255
+-1000   35  90 155 255
+-500    50 115 175 255
+-200    75 140 195 255
+-100   100 165 210 255
+-50    130 190 225 255
+-20    165 215 238 255
+-10    195 230 245 255
+-1     210 240 250 255
+0      172 208 165 255
+50     148 191 139 255
+200    168 198 143 255
+500    189 204 150 255
+1000   209 215 171 255
+1500   225 228 181 255
+2000   239 235 192 255
+3000   232 225 182 255
+4000   222 198 158 255
+5000   211 178 143 255
+6000   202 164 130 255
+7000   195 152 119 255
+8000   189 140 112 255
+8850   220 220 220 255
 EOF
 
 COLORED_TIF="$OUTDIR/${REGION}_colored.tif"
 gdaldem color-relief \
-  -alpha \
-  -nearest_color_entry \
   "$REGION_TIF" \
   "$COLOR_TABLE" \
-  "$COLORED_TIF"
+  "$COLORED_TIF" \
+  -co COMPRESS=DEFLATE \
+  -co TILED=YES
 
-# Convert to raster MBTiles (PNG tiles)
-# Max zoom z8 — GEBCO's 15 arc-second resolution = ~450m, useful to z9 at most
+# Blend hillshade with color relief using gdal_calc
+# Formula: color * (hillshade / 255) with slight brightening
+BLENDED_TIF="$OUTDIR/${REGION}_blended.tif"
+gdal_calc.py \
+  --calc="numpy.clip((A * (B / 180.0)), 0, 255).astype(numpy.uint8)" \
+  -A "$COLORED_TIF" --A_band=1 \
+  -B "$HILLSHADE_TIF" --B_band=1 \
+  --outfile="$OUTDIR/${REGION}_r.tif" \
+  --type=Byte --co COMPRESS=DEFLATE --co TILED=YES
+
+gdal_calc.py \
+  --calc="numpy.clip((A * (B / 180.0)), 0, 255).astype(numpy.uint8)" \
+  -A "$COLORED_TIF" --A_band=2 \
+  -B "$HILLSHADE_TIF" --B_band=1 \
+  --outfile="$OUTDIR/${REGION}_g.tif" \
+  --type=Byte --co COMPRESS=DEFLATE --co TILED=YES
+
+gdal_calc.py \
+  --calc="numpy.clip((A * (B / 180.0)), 0, 255).astype(numpy.uint8)" \
+  -A "$COLORED_TIF" --A_band=3 \
+  -B "$HILLSHADE_TIF" --B_band=1 \
+  --outfile="$OUTDIR/${REGION}_b.tif" \
+  --type=Byte --co COMPRESS=DEFLATE --co TILED=YES
+
+# Merge R, G, B bands into a single 3-band GeoTIFF
+gdal_merge.py \
+  -o "$BLENDED_TIF" \
+  -separate \
+  -co COMPRESS=DEFLATE \
+  -co TILED=YES \
+  "$OUTDIR/${REGION}_r.tif" \
+  "$OUTDIR/${REGION}_g.tif" \
+  "$OUTDIR/${REGION}_b.tif"
+
+rm -f "$OUTDIR/${REGION}_r.tif" "$OUTDIR/${REGION}_g.tif" "$OUTDIR/${REGION}_b.tif"
+
+# ---------------------------------------------------------------
+# STEP 4: Convert to MBTiles
+# ---------------------------------------------------------------
+echo "[4/4] Building MBTiles..."
+
 RASTER_MBTILES="$OUTDIR/${REGION}_raster.mbtiles"
 gdal_translate \
   -of MBTiles \
   -co TILE_FORMAT=PNG \
   -co ZOOM_LEVEL_STRATEGY=AUTO \
   -co RESAMPLING=AVERAGE \
-  "$COLORED_TIF" \
+  "$BLENDED_TIF" \
   "$RASTER_MBTILES"
 
 gdaladdo \
@@ -99,103 +164,21 @@ gdaladdo \
 
 # Write attribution into MBTiles metadata
 sqlite3 "$RASTER_MBTILES" "
-  INSERT OR REPLACE INTO metadata VALUES ('name', 'GEBCO ${YEAR} Depth Shading - ${REGION}');
-  INSERT OR REPLACE INTO metadata VALUES ('description', 'Bathymetric depth shading derived from GEBCO ${YEAR} Grid');
+  INSERT OR REPLACE INTO metadata VALUES ('name', 'GEBCO ${YEAR} Shaded Relief - ${REGION}');
+  INSERT OR REPLACE INTO metadata VALUES ('description', 'Bathymetric and topographic shaded relief derived from GEBCO ${YEAR} Grid');
   INSERT OR REPLACE INTO metadata VALUES ('attribution', 'GEBCO Compilation Group (${YEAR}) GEBCO ${YEAR} Grid (https://www.gebco.net)');
   INSERT OR REPLACE INTO metadata VALUES ('version', '${YEAR}.1');
-  INSERT OR REPLACE INTO metadata VALUES ('type', 'overlay');
+  INSERT OR REPLACE INTO metadata VALUES ('type', 'baselayer');
   INSERT OR REPLACE INTO metadata VALUES ('format', 'png');
 "
 
 echo "      Raster MBTiles: $(du -sh "$RASTER_MBTILES" | cut -f1)"
 
 # ---------------------------------------------------------------
-# STEP 3: VECTOR — Depth contours + areas → vector MBTiles
+# Cleanup intermediates
 # ---------------------------------------------------------------
-echo "[3/5] Extracting depth contours..."
-
-# Downsample to 60 arcseconds (~1.8km) before contouring.
-# At z8 each tile covers ~1.4°, so 15-arcsecond resolution is wildly
-# oversampled. Downsampling 4x makes contouring ~16x faster with
-# no visible difference at the target zoom levels.
-OCEAN_LOWRES="$OUTDIR/${REGION}_ocean_lowres.tif"
-gdalwarp \
-  -tr 0.016666667 0.016666667 \
-  -r average \
-  -co COMPRESS=DEFLATE \
-  -co TILED=YES \
-  "$REGION_TIF" \
-  "$OCEAN_LOWRES"
-
-# Mask land (positive values) to nodata
-OCEAN_TIF="$OUTDIR/${REGION}_ocean.tif"
-gdal_calc.py \
-  -A "$OCEAN_LOWRES" \
-  --outfile="$OCEAN_TIF" \
-  --calc="numpy.where(A < 0, A, 32767)" \
-  --NoDataValue=32767 \
-  --type=Int16 \
-  --co COMPRESS=DEFLATE
-
-# Contour lines — nautical depth intervals
-CONTOUR_LINES_GEOJSON="$OUTDIR/${REGION}_contour_lines.geojson"
-gdal_contour \
-  -f GeoJSON \
-  -fl -5 -10 -20 -30 -50 -100 -200 -500 -1000 -2000 -3000 -5000 \
-  -a depth \
-  -snodata 32767 \
-  "$OCEAN_TIF" \
-  "$CONTOUR_LINES_GEOJSON"
-
-# Depth area polygons — for depth-band shading in the client
-# Accept unclosed rings at region boundaries — they're valid enough
-# for vector tile rendering after tippecanoe clips them to tiles.
-CONTOUR_POLY_GEOJSON="$OUTDIR/${REGION}_contour_poly.geojson"
-OGR_GEOMETRY_ACCEPT_UNCLOSED_RING=YES gdal_contour \
-  -f GeoJSON \
-  -fl -5 -10 -20 -30 -50 -100 -200 -500 -1000 -2000 -3000 -5000 \
-  -p \
-  -amin DRVAL1 \
-  -amax DRVAL2 \
-  -snodata 32767 \
-  "$OCEAN_TIF" \
-  "$CONTOUR_POLY_GEOJSON"
-
-echo "[4/5] Building vector MBTiles with tippecanoe..."
-
-VECTOR_MBTILES="$OUTDIR/${REGION}_vector.mbtiles"
-
-tippecanoe \
-  --output="$VECTOR_MBTILES" \
-  --minimum-zoom=0 \
-  --maximum-zoom=8 \
-  --drop-densest-as-needed \
-  --coalesce-densest-as-needed \
-  --extend-zooms-if-still-dropping \
-  --simplification=10 \
-  --force \
-  --layer=depth_areas    "$CONTOUR_POLY_GEOJSON" \
-  --layer=depth_contours "$CONTOUR_LINES_GEOJSON"
-
-# Inject metadata
-sqlite3 "$VECTOR_MBTILES" "
-  INSERT OR REPLACE INTO metadata VALUES ('name', 'GEBCO ${YEAR} Depth Contours - ${REGION}');
-  INSERT OR REPLACE INTO metadata VALUES ('description', 'Bathymetric depth contours and areas derived from GEBCO ${YEAR} Grid');
-  INSERT OR REPLACE INTO metadata VALUES ('attribution', 'GEBCO Compilation Group (${YEAR}) GEBCO ${YEAR} Grid (https://www.gebco.net)');
-  INSERT OR REPLACE INTO metadata VALUES ('version', '${YEAR}.1');
-  INSERT OR REPLACE INTO metadata VALUES ('type', 'overlay');
-  INSERT OR REPLACE INTO metadata VALUES ('format', 'pbf');
-"
-
-echo "      Vector MBTiles: $(du -sh "$VECTOR_MBTILES" | cut -f1)"
-
-# ---------------------------------------------------------------
-# STEP 5: Cleanup intermediates, keep only final MBTiles
-# ---------------------------------------------------------------
-echo "[5/5] Cleaning up intermediates..."
-rm -f "$REGION_TIF" "$COLORED_TIF" "$OCEAN_LOWRES" "$OCEAN_TIF" \
-      "$CONTOUR_LINES_GEOJSON" "$CONTOUR_POLY_GEOJSON" \
-      "$COLOR_TABLE"
+echo "Cleaning up intermediates..."
+rm -f "$REGION_TIF" "$HILLSHADE_TIF" "$COLORED_TIF" "$BLENDED_TIF" "$COLOR_TABLE"
 
 echo "=== Done: $REGION ==="
 ls -lh "$OUTDIR/${REGION}_"*.mbtiles
