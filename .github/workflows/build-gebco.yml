@@ -156,83 +156,42 @@ jobs:
           name: release-files
           path: release/
 
-      - name: Create GitHub Release
-        id: create-release
-        uses: actions/github-script@v8
-        with:
-          script: |
-            const year = '${{ needs.setup.outputs.gebco_year }}';
-            const tag = `gebco-${year}`;
-
-            // Delete existing release with same tag if present (for rebuilds)
-            try {
-              const existing = await github.rest.repos.getReleaseByTag({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                tag: tag,
-              });
-              await github.rest.repos.deleteRelease({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                release_id: existing.data.id,
-              });
-              // Also delete the tag so it can be recreated
-              try {
-                await github.rest.git.deleteRef({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  ref: `tags/${tag}`,
-                });
-              } catch (e) {}
-              console.log(`Deleted existing release ${tag}`);
-            } catch (e) {
-              // No existing release — that's fine
-            }
-
-            const release = await github.rest.repos.createRelease({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              tag_name: tag,
-              name: `GEBCO ${year} Shaded Relief`,
-              body: [
-                `## GEBCO ${year} Shaded Relief MBTiles`,
-                ``,
-                `Global bathymetric and topographic shaded relief tiles derived from the [GEBCO ${year} Grid](https://www.gebco.net/data_and_products/gridded_bathymetry_data/).`,
-                ``,
-                `| File | Description |`,
-                `|------|-------------|`,
-                `| \`gebco-${year}-shaded-relief.zip\` | Raster shaded relief (PNG tiles, z0-z8) |`,
-                `| \`catalog.json\` | Machine-readable catalog for SignalK charts provider |`,
-                ``,
-                `### Usage with SignalK`,
-                `1. Download and extract the \`.zip\` file`,
-                `2. Place the \`.mbtiles\` file in your SignalK charts directory`,
-                `3. The chart provider will auto-detect it`,
-                ``,
-                `### Attribution`,
-                `GEBCO Compilation Group (${year}) GEBCO ${year} Grid — [gebco.net](https://www.gebco.net)`,
-                ``,
-                `> GEBCO's 15 arc-second resolution (~450m cells) is suitable for offshore`,
-                `> passage planning but NOT for coastal or harbor navigation.`,
-                `> Always use official nautical charts for navigation.`,
-              ].join('\n'),
-              draft: false,
-              prerelease: false,
-            });
-
-            console.log(`Created release: ${release.data.html_url}`);
-            core.setOutput('release_id', release.data.id);
-
-      - name: Upload files to release
+      - name: Create release and upload files
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           YEAR="${{ needs.setup.outputs.gebco_year }}"
           TAG="gebco-${YEAR}"
-          for F in release/*; do
-            echo "Uploading $(basename "$F") ($(du -sh "$F" | cut -f1))..."
-            gh release upload "$TAG" "$F" --clobber
-          done
+
+          # Delete existing release if rebuilding the same year
+          gh release delete "$TAG" --yes --cleanup-tag 2>/dev/null || true
+
+          # Create release and upload all files in one step
+          gh release create "$TAG" release/* \
+            --title "GEBCO ${YEAR} Shaded Relief" \
+            --notes "$(cat <<EOF
+          ## GEBCO ${YEAR} Shaded Relief MBTiles
+
+          Global bathymetric and topographic shaded relief tiles derived from the [GEBCO ${YEAR} Grid](https://www.gebco.net/data_and_products/gridded_bathymetry_data/).
+
+          | File | Description |
+          |------|-------------|
+          | \`gebco-${YEAR}-shaded-relief.zip\` | Raster shaded relief (JPEG tiles, z0-z8) |
+          | \`catalog.json\` | Machine-readable catalog for SignalK charts provider |
+
+          ### Usage with SignalK
+          1. Download and extract the \`.zip\` file
+          2. Place the \`.mbtiles\` file in your SignalK charts directory
+          3. The chart provider will auto-detect it
+
+          ### Attribution
+          GEBCO Compilation Group (${YEAR}) GEBCO ${YEAR} Grid — [gebco.net](https://www.gebco.net)
+
+          > GEBCO's 15 arc-second resolution (~450m cells) is suitable for offshore
+          > passage planning but NOT for coastal or harbor navigation.
+          > Always use official nautical charts for navigation.
+          EOF
+          )"
 
       - name: Update version state in repository
         run: |

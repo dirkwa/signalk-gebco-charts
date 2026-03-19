@@ -10,7 +10,7 @@ See the [Releases](../../releases) page for the latest pre-built files.
 
 | File | Description |
 |------|-------------|
-| `gebco-YYYY-shaded-relief.zip` | Raster shaded relief (PNG tiles, z0–z8) |
+| `gebco-YYYY-shaded-relief.zip` | Raster shaded relief (JPEG tiles, z0–z8) |
 | `catalog.json` | Machine-readable catalog for the charts provider plugin |
 
 ## Usage with SignalK
@@ -44,7 +44,7 @@ COG on source.coop S3 (4.28 GB Cloud-Optimized GeoTIFF)
     │
     └─ gdal_calc.py blend    → hillshade × color → shaded relief
               │
-              └─ gdal_translate -of MBTiles → PNG tiles z0-z8
+              └─ gdal_translate -of MBTiles → JPEG tiles z0-z8
                        │
                        └─ GitHub Release
 ```
