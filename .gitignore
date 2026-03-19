@@ -1,0 +1,7 @@
+*.mbtiles
+*.tif
+*.geojson
+*.zip
+output/
+merged/
+release/

@@ -1,0 +1,77 @@
+name: Check GEBCO Version
+
+# Runs weekly during the GEBCO release window (July–October).
+# If a new year is detected that hasn't been built yet,
+# it dispatches the main build workflow.
+
+on:
+  schedule:
+    # Run every Monday at 06:00 UTC, July through October
+    - cron: '0 6 * 7-10 1'
+  workflow_dispatch:
+    inputs:
+      force_year:
+        description: 'Force a specific year (e.g. 2025). Leave empty to auto-detect.'
+        required: false
+        default: ''
+
+jobs:
+  check-version:
+    runs-on: ubuntu-latest
+    outputs:
+      new_version_available: ${{ steps.compare.outputs.new_version_available }}
+      gebco_year: ${{ steps.compare.outputs.gebco_year }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Detect latest GEBCO year
+        id: detect
+        run: |
+          chmod +x .github/scripts/detect-gebco-year.sh
+
+          if [ -n "${{ github.event.inputs.force_year }}" ]; then
+            YEAR="${{ github.event.inputs.force_year }}"
+            echo "Using forced year: $YEAR"
+          else
+            YEAR=$(.github/scripts/detect-gebco-year.sh)
+            echo "Auto-detected year: $YEAR"
+          fi
+
+          echo "gebco_year=$YEAR" >> "$GITHUB_OUTPUT"
+
+      - name: Compare with last built version
+        id: compare
+        run: |
+          LATEST_YEAR="${{ steps.detect.outputs.gebco_year }}"
+          LAST_BUILT=$(jq -r '.last_built_year' gebco-version.json)
+
+          echo "Latest GEBCO year : $LATEST_YEAR"
+          echo "Last built year   : $LAST_BUILT"
+
+          if [ "$LATEST_YEAR" -gt "$LAST_BUILT" ]; then
+            echo "✅ New version available: $LATEST_YEAR (last built: $LAST_BUILT)"
+            echo "new_version_available=true"  >> "$GITHUB_OUTPUT"
+          else
+            echo "⏭️ Already up to date ($LATEST_YEAR)"
+            echo "new_version_available=false" >> "$GITHUB_OUTPUT"
+          fi
+
+          echo "gebco_year=$LATEST_YEAR" >> "$GITHUB_OUTPUT"
+
+      - name: Trigger build workflow
+        if: steps.compare.outputs.new_version_available == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.actions.createWorkflowDispatch({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              workflow_id: 'build-gebco.yml',
+              ref: 'main',
+              inputs: {
+                gebco_year: '${{ steps.compare.outputs.gebco_year }}'
+              }
+            });
+            console.log('Build workflow triggered for GEBCO ${{ steps.compare.outputs.gebco_year }}');
