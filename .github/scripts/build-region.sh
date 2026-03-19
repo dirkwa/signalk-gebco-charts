@@ -123,7 +123,8 @@ gdal_calc.py \
   --calc="numpy.where(A < 0, A, 32767)" \
   --NoDataValue=32767 \
   --type=Int16 \
-  --co COMPRESS=DEFLATE
+  --co COMPRESS=DEFLATE \
+  --co BIGTIFF=YES
 
 # Contour lines — nautical depth intervals
 CONTOUR_LINES_GEOJSON="$OUTDIR/${REGION}_contour_lines.geojson"
