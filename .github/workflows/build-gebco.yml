@@ -121,7 +121,7 @@ jobs:
         if: ${{ github.event.inputs.skip_vector != 'true' }}
         run: |
           # Install from pre-built binary in the felt/tippecanoe releases
-          TIPPECANOE_VERSION=2.17.0
+          TIPPECANOE_VERSION=2.79.0
           wget -q "https://github.com/felt/tippecanoe/archive/refs/tags/${TIPPECANOE_VERSION}.tar.gz"
           tar xf "${TIPPECANOE_VERSION}.tar.gz"
           cd "tippecanoe-${TIPPECANOE_VERSION}"
@@ -180,7 +180,7 @@ jobs:
 
       - name: Install tippecanoe (for tile-join)
         run: |
-          TIPPECANOE_VERSION=2.17.0
+          TIPPECANOE_VERSION=2.79.0
           wget -q "https://github.com/felt/tippecanoe/archive/refs/tags/${TIPPECANOE_VERSION}.tar.gz"
           tar xf "${TIPPECANOE_VERSION}.tar.gz"
           cd "tippecanoe-${TIPPECANOE_VERSION}"
