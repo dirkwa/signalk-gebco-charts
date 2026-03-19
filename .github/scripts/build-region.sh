@@ -156,7 +156,8 @@ echo "[4/4] Building MBTiles..."
 RASTER_MBTILES="$OUTDIR/${REGION}_raster.mbtiles"
 gdal_translate \
   -of MBTiles \
-  -co TILE_FORMAT=PNG \
+  -co TILE_FORMAT=JPEG \
+  -co QUALITY=85 \
   -co ZOOM_LEVEL_STRATEGY=AUTO \
   -co RESAMPLING=AVERAGE \
   "$BLENDED_TIF" \
@@ -175,7 +176,7 @@ sqlite3 "$RASTER_MBTILES" "
   INSERT OR REPLACE INTO metadata VALUES ('attribution', 'GEBCO Compilation Group (${YEAR}) GEBCO ${YEAR} Grid (https://www.gebco.net)');
   INSERT OR REPLACE INTO metadata VALUES ('version', '${YEAR}.1');
   INSERT OR REPLACE INTO metadata VALUES ('type', 'baselayer');
-  INSERT OR REPLACE INTO metadata VALUES ('format', 'png');
+  INSERT OR REPLACE INTO metadata VALUES ('format', 'jpg');
 "
 
 echo "      Raster MBTiles: $(du -sh "$RASTER_MBTILES" | cut -f1)"

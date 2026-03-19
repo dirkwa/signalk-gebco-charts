@@ -221,41 +221,15 @@ jobs:
             core.setOutput('release_id', release.data.id);
 
       - name: Upload files to release
-        uses: actions/github-script@v8
-        with:
-          script: |
-            const fs = require('fs');
-            const path = require('path');
-            const releaseId = ${{ steps.create-release.outputs.release_id }};
-
-            const releaseDir = 'release';
-            const files = fs.readdirSync(releaseDir);
-
-            for (const filename of files) {
-              const filepath = path.join(releaseDir, filename);
-              const stats = fs.statSync(filepath);
-              const content = fs.readFileSync(filepath);
-
-              console.log(`Uploading ${filename} (${(stats.size / 1024 / 1024).toFixed(1)} MB)...`);
-
-              let contentType = 'application/octet-stream';
-              if (filename.endsWith('.json')) contentType = 'application/json';
-              if (filename.endsWith('.zip'))  contentType = 'application/zip';
-
-              await github.rest.repos.uploadReleaseAsset({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                release_id: releaseId,
-                name: filename,
-                data: content,
-                headers: {
-                  'content-type': contentType,
-                  'content-length': stats.size,
-                },
-              });
-
-              console.log(`  Uploaded ${filename}`);
-            }
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          YEAR="${{ needs.setup.outputs.gebco_year }}"
+          TAG="gebco-${YEAR}"
+          for F in release/*; do
+            echo "Uploading $(basename "$F") ($(du -sh "$F" | cut -f1))..."
+            gh release upload "$TAG" "$F" --clobber
+          done
 
       - name: Update version state in repository
         run: |
