@@ -101,7 +101,7 @@ jobs:
   build-region:
     needs: setup
     runs-on: ubuntu-latest
-    timeout-minutes: 300  # 5 hours max per region
+    timeout-minutes: 120  # 2 hours max per region (downsampled contours)
     strategy:
       fail-fast: false    # Don't cancel other regions if one fails
       matrix: ${{ fromJson(needs.setup.outputs.matrix) }}
@@ -292,7 +292,7 @@ jobs:
               generated: $gen,
               source: $src,
               attribution: $attr,
-              license: "CC0 / Public Domain with attribution",
+              license: "CC-BY 4.0 (GEBCO data requires attribution)",
               files: [
                 {
                   name: ("gebco-" + $ver + "-depth-shading"),

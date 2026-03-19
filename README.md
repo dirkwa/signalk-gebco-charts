@@ -36,7 +36,7 @@ GEBCO's 15 arc-second resolution (~450m cells at the equator) is suitable for **
 GEBCO Compilation Group (YEAR) GEBCO YEAR Grid  
 https://www.gebco.net
 
-The GEBCO Grid is released under a permissive license requiring attribution. See [GEBCO terms of use](https://www.gebco.net/data_and_products/gridded_bathymetry_data/#a1) for details.
+The GEBCO Grid is released under **CC-BY 4.0** — you may redistribute and create derivative works but must include attribution. See [GEBCO terms of use](https://www.gebco.net/data_and_products/gridded_bathymetry_data/#a1) for details. The build tooling in this repository is licensed under Apache-2.0.
 
 ## How the build works
 

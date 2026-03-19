@@ -114,17 +114,28 @@ echo "      Raster MBTiles: $(du -sh "$RASTER_MBTILES" | cut -f1)"
 # ---------------------------------------------------------------
 echo "[3/5] Extracting depth contours..."
 
-# Only process the ocean (negative depth values)
-# Use a masked version of the raster clamped to ocean depths only
+# Downsample to 60 arcseconds (~1.8km) before contouring.
+# At z8 each tile covers ~1.4°, so 15-arcsecond resolution is wildly
+# oversampled. Downsampling 4x makes contouring ~16x faster with
+# no visible difference at the target zoom levels.
+OCEAN_LOWRES="$OUTDIR/${REGION}_ocean_lowres.tif"
+gdalwarp \
+  -tr 0.016666667 0.016666667 \
+  -r average \
+  -co COMPRESS=DEFLATE \
+  -co TILED=YES \
+  "$REGION_TIF" \
+  "$OCEAN_LOWRES"
+
+# Mask land (positive values) to nodata
 OCEAN_TIF="$OUTDIR/${REGION}_ocean.tif"
 gdal_calc.py \
-  -A "$REGION_TIF" \
+  -A "$OCEAN_LOWRES" \
   --outfile="$OCEAN_TIF" \
   --calc="numpy.where(A < 0, A, 32767)" \
   --NoDataValue=32767 \
   --type=Int16 \
-  --co COMPRESS=DEFLATE \
-  --co BIGTIFF=YES
+  --co COMPRESS=DEFLATE
 
 # Contour lines — nautical depth intervals
 CONTOUR_LINES_GEOJSON="$OUTDIR/${REGION}_contour_lines.geojson"
@@ -179,7 +190,7 @@ echo "      Vector MBTiles: $(du -sh "$VECTOR_MBTILES" | cut -f1)"
 # STEP 5: Cleanup intermediates, keep only final MBTiles
 # ---------------------------------------------------------------
 echo "[5/5] Cleaning up intermediates..."
-rm -f "$REGION_TIF" "$COLORED_TIF" "$OCEAN_TIF" \
+rm -f "$REGION_TIF" "$COLORED_TIF" "$OCEAN_LOWRES" "$OCEAN_TIF" \
       "$CONTOUR_LINES_GEOJSON" "$CONTOUR_POLY_GEOJSON" \
       "$COLOR_TABLE"
 
