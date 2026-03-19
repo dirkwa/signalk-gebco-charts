@@ -114,33 +114,39 @@ gdal_calc.py \
   -A "$COLORED_TIF" --A_band=1 \
   -B "$HILLSHADE_TIF" --B_band=1 \
   --outfile="$OUTDIR/${REGION}_r.tif" \
-  --type=Byte --co COMPRESS=DEFLATE --co TILED=YES
+  --type=Byte --co COMPRESS=DEFLATE --co TILED=YES --co BIGTIFF=YES
 
 gdal_calc.py \
   --calc="numpy.clip((A * (B / 180.0)), 0, 255).astype(numpy.uint8)" \
   -A "$COLORED_TIF" --A_band=2 \
   -B "$HILLSHADE_TIF" --B_band=1 \
   --outfile="$OUTDIR/${REGION}_g.tif" \
-  --type=Byte --co COMPRESS=DEFLATE --co TILED=YES
+  --type=Byte --co COMPRESS=DEFLATE --co TILED=YES --co BIGTIFF=YES
 
 gdal_calc.py \
   --calc="numpy.clip((A * (B / 180.0)), 0, 255).astype(numpy.uint8)" \
   -A "$COLORED_TIF" --A_band=3 \
   -B "$HILLSHADE_TIF" --B_band=1 \
   --outfile="$OUTDIR/${REGION}_b.tif" \
-  --type=Byte --co COMPRESS=DEFLATE --co TILED=YES
+  --type=Byte --co COMPRESS=DEFLATE --co TILED=YES --co BIGTIFF=YES
 
-# Merge R, G, B bands into a single 3-band GeoTIFF
-gdal_merge.py \
-  -o "$BLENDED_TIF" \
+# Merge R, G, B bands via VRT (zero memory — no 28GB allocation)
+BLENDED_VRT="$OUTDIR/${REGION}_blended.vrt"
+gdalbuildvrt \
   -separate \
-  -co COMPRESS=DEFLATE \
-  -co TILED=YES \
+  "$BLENDED_VRT" \
   "$OUTDIR/${REGION}_r.tif" \
   "$OUTDIR/${REGION}_g.tif" \
   "$OUTDIR/${REGION}_b.tif"
 
-rm -f "$OUTDIR/${REGION}_r.tif" "$OUTDIR/${REGION}_g.tif" "$OUTDIR/${REGION}_b.tif"
+gdal_translate \
+  -co COMPRESS=DEFLATE \
+  -co TILED=YES \
+  -co BIGTIFF=YES \
+  "$BLENDED_VRT" \
+  "$BLENDED_TIF"
+
+rm -f "$OUTDIR/${REGION}_r.tif" "$OUTDIR/${REGION}_g.tif" "$OUTDIR/${REGION}_b.tif" "$BLENDED_VRT"
 
 # ---------------------------------------------------------------
 # STEP 4: Convert to MBTiles
