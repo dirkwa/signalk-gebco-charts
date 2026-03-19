@@ -17,6 +17,9 @@ on:
         required: true
         default: '2025'
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   # ─────────────────────────────────────────────────────────────────────────
   # JOB 1: Validate inputs
@@ -247,6 +250,7 @@ jobs:
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add gebco-version.json
+          git diff --cached --quiet && echo "Version file unchanged, skipping commit" && exit 0
           git commit -m "chore: update GEBCO version state to ${YEAR} [skip ci]"
           git push
 
