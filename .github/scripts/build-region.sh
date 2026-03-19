@@ -59,6 +59,26 @@ gdaldem hillshade \
   "$REGION_TIF" \
   "$HILLSHADE_TIF"
 
+# Fix antimeridian edge artifact: hillshade has no neighbor pixels
+# at the raster edges, producing a bright white line at ±180°.
+# Copy the 2nd column over the 1st, and 2nd-to-last over the last.
+python3 -c "
+from osgeo import gdal
+import numpy as np
+ds = gdal.Open('$HILLSHADE_TIF', gdal.GA_Update)
+band = ds.GetRasterBand(1)
+h = band.YSize
+# Fix left edge (lon -180)
+col1 = band.ReadAsArray(1, 0, 1, h)
+band.WriteArray(col1, 0, 0)
+# Fix right edge (lon +180)
+w = band.XSize
+col_prev = band.ReadAsArray(w - 2, 0, 1, h)
+band.WriteArray(col_prev, w - 1, 0)
+band.FlushCache()
+ds = None
+"
+
 # ---------------------------------------------------------------
 # STEP 3: Apply hypsometric color ramp (ocean + land)
 # ---------------------------------------------------------------
