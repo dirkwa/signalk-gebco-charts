@@ -169,14 +169,18 @@ gdaladdo \
   "$RASTER_MBTILES" \
   2 4 8 16 32 64 128 256
 
-# Write attribution into MBTiles metadata
+# Rewrite MBTiles metadata cleanly (GDAL leaves duplicates without a UNIQUE constraint)
 sqlite3 "$RASTER_MBTILES" "
-  INSERT OR REPLACE INTO metadata VALUES ('name', 'GEBCO ${YEAR} Shaded Relief - ${REGION}');
-  INSERT OR REPLACE INTO metadata VALUES ('description', 'Bathymetric and topographic shaded relief derived from GEBCO ${YEAR} Grid');
-  INSERT OR REPLACE INTO metadata VALUES ('attribution', 'GEBCO Compilation Group (${YEAR}) GEBCO ${YEAR} Grid (https://www.gebco.net)');
-  INSERT OR REPLACE INTO metadata VALUES ('version', '${YEAR}.1');
-  INSERT OR REPLACE INTO metadata VALUES ('type', 'baselayer');
-  INSERT OR REPLACE INTO metadata VALUES ('format', 'jpg');
+  DELETE FROM metadata;
+  INSERT INTO metadata VALUES ('name', 'GEBCO ${YEAR} Shaded Relief');
+  INSERT INTO metadata VALUES ('description', 'Bathymetric and topographic shaded relief derived from GEBCO ${YEAR} Grid');
+  INSERT INTO metadata VALUES ('attribution', 'GEBCO Compilation Group (${YEAR}) GEBCO ${YEAR} Grid (https://www.gebco.net)');
+  INSERT INTO metadata VALUES ('version', '${YEAR}.1');
+  INSERT INTO metadata VALUES ('type', 'tilelayer');
+  INSERT INTO metadata VALUES ('format', 'jpg');
+  INSERT INTO metadata VALUES ('bounds', '-180,-85.05,180,85.05');
+  INSERT INTO metadata VALUES ('minzoom', '0');
+  INSERT INTO metadata VALUES ('maxzoom', '8');
 "
 
 echo "      Raster MBTiles: $(du -sh "$RASTER_MBTILES" | cut -f1)"
