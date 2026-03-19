@@ -218,14 +218,22 @@ jobs:
           fi
 
           echo "Merging raster tiles..."
-          # tile-join merges MBTiles files, using the last writer for overlapping tiles
-          tile-join \
-            --output="merged/gebco-${YEAR}-depth-shading.mbtiles" \
-            --force \
-            $RASTER_FILES
+          # tile-join only works with vector (PBF) tiles in newer tippecanoe.
+          # For raster MBTiles, merge at the SQLite level instead.
+          MERGED="merged/gebco-${YEAR}-depth-shading.mbtiles"
+          FIRST=true
+          for F in $RASTER_FILES; do
+            if [ "$FIRST" = true ]; then
+              cp "$F" "$MERGED"
+              FIRST=false
+            else
+              # Copy tiles from subsequent files into the first
+              sqlite3 "$MERGED" "ATTACH '$F' AS src; INSERT OR REPLACE INTO tiles SELECT * FROM src.tiles; DETACH src;"
+            fi
+          done
 
           # Update attribution in merged file
-          sqlite3 "merged/gebco-${YEAR}-depth-shading.mbtiles" "
+          sqlite3 "$MERGED" "
             INSERT OR REPLACE INTO metadata VALUES ('name', 'GEBCO ${YEAR} Depth Shading - Global');
             INSERT OR REPLACE INTO metadata VALUES ('description', 'Global bathymetric depth shading raster tiles at z0-z8, derived from GEBCO ${YEAR} Grid');
             INSERT OR REPLACE INTO metadata VALUES ('attribution', 'GEBCO Compilation Group (${YEAR}) GEBCO ${YEAR} Grid (https://www.gebco.net)');
