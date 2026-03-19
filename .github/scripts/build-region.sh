@@ -170,6 +170,8 @@ tippecanoe \
   --drop-densest-as-needed \
   --coalesce-densest-as-needed \
   --extend-zooms-if-still-dropping \
+  --no-fix-polygons \
+  --simplification=10 \
   --force \
   --layer=depth_areas    "$CONTOUR_POLY_GEOJSON" \
   --layer=depth_contours "$CONTOUR_LINES_GEOJSON"
