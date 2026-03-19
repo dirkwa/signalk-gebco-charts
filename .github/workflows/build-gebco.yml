@@ -27,11 +27,13 @@ on:
         default: false
 
 env:
-  # The 4 geographic regions to process in parallel.
-  # Each covers roughly one quarter of the world's oceans.
+  # Geographic regions to process in parallel.
+  # Pacific is split in two to keep polygon complexity within
+  # tippecanoe's wagyu clipping limits.
   # Format: "name|minx|miny|maxx|maxy"
   REGIONS: |
-    pacific|-180|-80|-60|80
+    pacific_west|-180|-80|-120|80
+    pacific_east|-120|-80|-60|80
     atlantic|-60|-80|30|80
     indian_east|30|-80|120|80
     indian_west_pacific_east|120|-80|180|80
