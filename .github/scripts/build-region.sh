@@ -148,8 +148,10 @@ gdal_contour \
   "$CONTOUR_LINES_GEOJSON"
 
 # Depth area polygons — for depth-band shading in the client
-CONTOUR_POLY_RAW="$OUTDIR/${REGION}_contour_poly_raw.geojson"
-gdal_contour \
+# Accept unclosed rings at region boundaries — they're valid enough
+# for vector tile rendering after tippecanoe clips them to tiles.
+CONTOUR_POLY_GEOJSON="$OUTDIR/${REGION}_contour_poly.geojson"
+OGR_GEOMETRY_ACCEPT_UNCLOSED_RING=YES gdal_contour \
   -f GeoJSON \
   -fl -5 -10 -20 -30 -50 -100 -200 -500 -1000 -2000 -3000 -5000 \
   -p \
@@ -157,16 +159,7 @@ gdal_contour \
   -amax DRVAL2 \
   -snodata 32767 \
   "$OCEAN_TIF" \
-  "$CONTOUR_POLY_RAW"
-
-# Fix invalid geometry (non-closed rings) from gdal_contour
-CONTOUR_POLY_GEOJSON="$OUTDIR/${REGION}_contour_poly.geojson"
-ogr2ogr \
-  -f GeoJSON \
-  -makevalid \
-  "$CONTOUR_POLY_GEOJSON" \
-  "$CONTOUR_POLY_RAW"
-rm -f "$CONTOUR_POLY_RAW"
+  "$CONTOUR_POLY_GEOJSON"
 
 echo "[4/5] Building vector MBTiles with tippecanoe..."
 
