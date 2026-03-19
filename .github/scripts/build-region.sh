@@ -148,7 +148,7 @@ gdal_contour \
   "$CONTOUR_LINES_GEOJSON"
 
 # Depth area polygons — for depth-band shading in the client
-CONTOUR_POLY_GEOJSON="$OUTDIR/${REGION}_contour_poly.geojson"
+CONTOUR_POLY_RAW="$OUTDIR/${REGION}_contour_poly_raw.geojson"
 gdal_contour \
   -f GeoJSON \
   -fl -5 -10 -20 -30 -50 -100 -200 -500 -1000 -2000 -3000 -5000 \
@@ -157,7 +157,16 @@ gdal_contour \
   -amax DRVAL2 \
   -snodata 32767 \
   "$OCEAN_TIF" \
-  "$CONTOUR_POLY_GEOJSON"
+  "$CONTOUR_POLY_RAW"
+
+# Fix invalid geometry (non-closed rings) from gdal_contour
+CONTOUR_POLY_GEOJSON="$OUTDIR/${REGION}_contour_poly.geojson"
+ogr2ogr \
+  -f GeoJSON \
+  -makevalid \
+  "$CONTOUR_POLY_GEOJSON" \
+  "$CONTOUR_POLY_RAW"
+rm -f "$CONTOUR_POLY_RAW"
 
 echo "[4/5] Building vector MBTiles with tippecanoe..."
 
@@ -170,7 +179,6 @@ tippecanoe \
   --drop-densest-as-needed \
   --coalesce-densest-as-needed \
   --extend-zooms-if-still-dropping \
-  --no-fix-polygons \
   --simplification=10 \
   --force \
   --layer=depth_areas    "$CONTOUR_POLY_GEOJSON" \
