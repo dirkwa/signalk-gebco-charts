@@ -1,3 +1,9 @@
+This Apache-2.0 license applied to the build tooling in signalk-gebco-charts up
+to and including commit 708a1b5 (August 2026). That state remains available
+under Apache-2.0 in perpetuity. Later commits are licensed under the terms in
+LICENSE.md. The GEBCO-derived MBTiles published as release assets are not
+covered by either file — they remain under GEBCO's CC-BY 4.0 terms.
+
                                  Apache License
                            Version 2.0, January 2004
                         http://www.apache.org/licenses/

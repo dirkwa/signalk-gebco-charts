@@ -29,7 +29,7 @@ GEBCO's 15 arc-second resolution (~450m cells at the equator) is suitable for **
 GEBCO Compilation Group (YEAR) GEBCO YEAR Grid
 https://www.gebco.net
 
-The GEBCO Grid is released under **CC-BY 4.0** — you may redistribute and create derivative works but must include attribution. See [GEBCO terms of use](https://www.gebco.net/data_and_products/gridded_bathymetry_data/#a1) for details. The build tooling in this repository is licensed under Apache-2.0.
+The GEBCO Grid is released under **CC-BY 4.0** — you may redistribute and create derivative works but must include attribution. See [GEBCO terms of use](https://www.gebco.net/data_and_products/gridded_bathymetry_data/#a1) for details. The build tooling in this repository is licensed separately — see [License](#license) below.
 
 ## How the build works
 
@@ -56,3 +56,26 @@ Actions → Build GEBCO MBTiles → Run workflow → Enter year
 ```
 
 The weekly check job runs every Monday July–October and automatically triggers a build when it detects a new GEBCO release year on source.coop.
+
+## License
+
+**Data:** the published MBTiles are derived from the GEBCO Grid and remain under
+GEBCO's **CC-BY 4.0** terms (see [Attribution](#attribution)). Nothing below
+restricts them.
+
+**Build tooling** (the workflows and scripts in this repository) is
+**source available, not open source**. See [LICENSE.md](LICENSE.md).
+
+**You may**, free of charge: run it for your own boat, fleet or company; modify
+it for your own use; use it in education and research; and provide professional
+services around it.
+
+**You may not**: redistribute the tooling, or publish a modified version of it.
+Verbatim copies of official releases may be mirrored and cached.
+
+The tooling as of commit 708a1b5 and earlier remains available under Apache-2.0,
+see [LICENSE-Apache-2.0-through-2026-08.txt](LICENSE-Apache-2.0-through-2026-08.txt).
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md).
